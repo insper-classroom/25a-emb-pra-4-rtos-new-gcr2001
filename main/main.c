@@ -24,31 +24,36 @@
    SemaphoreHandle_t xSemaphoreTrigger;
 
    // Variáveis globais para armazenar tempos
-   volatile int time_init = 0;
-   volatile int time_end = 0;
+
 
    // Callback para medir tempo do pulso do echo
    void pin_callback(uint gpio, uint32_t events) {
-       if (events == GPIO_IRQ_EDGE_RISE) {
-           time_init = to_us_since_boot(get_absolute_time()); //Se o pulso sobe, armazena quando começou
-       } else if (events == GPIO_IRQ_EDGE_FALL) {
-           time_end = to_us_since_boot(get_absolute_time());
-           int pulse_duration = time_end - time_init; // Se o pulso desce, calcula o tempo se pulso
-           xQueueSendFromISR(xQueueTime, &pulse_duration, NULL);
-       }
-   }
+        static int time_init = 0;
+        int time_end = 0;
+        int pulse_duration = 0;
+
+        if (events == GPIO_IRQ_EDGE_RISE) {
+            time_init = to_us_since_boot(get_absolute_time());
+        } else if (events == GPIO_IRQ_EDGE_FALL) {
+            time_end = to_us_since_boot(get_absolute_time());
+            pulse_duration = time_end - time_init;
+
+            // Envia duração do pulso para a fila
+            xQueueSendFromISR(xQueueTime, &pulse_duration, NULL);
+        }
+    }
 
    // Task para disparar o trigger do sensor
    //Essa tarefa envia um pulso de 10µs no TRIG_PIN a cada 500ms para ativar o sensor.
    void trigger_task(void *p) {
-       gpio_init(TRIG_PIN);
-       gpio_set_dir(TRIG_PIN, GPIO_OUT);
+        gpio_init(TRIG_PIN);
+        gpio_set_dir(TRIG_PIN, GPIO_OUT);
 
-       while (1) {
-           gpio_put(TRIG_PIN, 1);
-           vTaskDelay(pdMS_TO_TICKS(10));
-           gpio_put(TRIG_PIN, 0);
-           vTaskDelay(pdMS_TO_TICKS(5));
+        while (1) {
+            gpio_put(TRIG_PIN, 1);
+            vTaskDelay(pdMS_TO_TICKS(10));
+            gpio_put(TRIG_PIN, 0);
+            vTaskDelay(pdMS_TO_TICKS(5));
            
             //PARA MELHORAR, COLCOAR UM SEMAFORE GIVE
             xSemaphoreGive(xSemaphoreTrigger);
@@ -57,17 +62,18 @@
 
    // Task para calcular distância com base no tempo recebido
    void echo_task(void *p) {
-       int pulse_duration;
-       float distance;
+        int pulse_duration;
+        float distance;
 
-       while (1) {
-           if (xQueueReceive(xQueueTime, &pulse_duration, pdMS_TO_TICKS(50))) {
-               distance = (pulse_duration * 0.0343) / 2; // Cálculo da distância em cm
-
-               xQueueSend(xQueueDistance, &distance, pdMS_TO_TICKS(10));
-               xSemaphoreGive(xSemaphoreTrigger); // Notifica o OLED que há nova leitura
-           }
-       }
+        while (1) {
+            if (xQueueReceive(xQueueTime, &pulse_duration, pdMS_TO_TICKS(50))) {
+                distance = (pulse_duration * 0.0343) / 2; // Cálculo da distância em cm
+                xQueueSend(xQueueDistance, &distance, pdMS_TO_TICKS(10));
+    
+                // Libera semáforo para exibir no OLED
+                xSemaphoreGive(xSemaphoreTrigger);
+            }
+        }
    }
 
    // Task para exibir a distância no display OLED
@@ -118,8 +124,8 @@
        gpio_set_irq_enabled_with_callback(ECHO_PIN, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true, &pin_callback);
 
        // Criação das filas e semáforo
-       xQueueTime = xQueueCreate(10, sizeof(int));
-       xQueueDistance = xQueueCreate(10, sizeof(float));
+       xQueueTime = xQueueCreate(32, sizeof(int));
+       xQueueDistance = xQueueCreate(32, sizeof(float));
        xSemaphoreTrigger = xSemaphoreCreateBinary();
 
        // Criação das tasks
