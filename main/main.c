@@ -28,9 +28,9 @@
 
    // Callback para medir tempo do pulso do echo
    void pin_callback(uint gpio, uint32_t events) {
-        static int time_init = 0;
-        int time_end = 0;
-        int pulse_duration = 0;
+        static int time_init;
+        int time_end;
+        int pulse_duration;
 
         if (events == GPIO_IRQ_EDGE_RISE) {
             time_init = to_us_since_boot(get_absolute_time());
